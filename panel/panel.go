@@ -2,28 +2,30 @@ package panel
 
 import (
 	"encoding/json"
-	io "io/ioutil"
-	"log"
+	"os"
 	"sync"
 
-	"github.com/XrayR-project/XrayR/app/mydispatcher"
-
-	"github.com/XrayR-project/XrayR/api"
-	"github.com/XrayR-project/XrayR/api/pmpanel"
-	"github.com/XrayR-project/XrayR/api/proxypanel"
-	"github.com/XrayR-project/XrayR/api/sspanel"
-	"github.com/XrayR-project/XrayR/api/v2board"
-	"github.com/XrayR-project/XrayR/api/v2raysocks"
-	_ "github.com/XrayR-project/XrayR/main/distro/all"
-	"github.com/XrayR-project/XrayR/service"
-	"github.com/XrayR-project/XrayR/service/controller"
-	"github.com/imdario/mergo"
+	"dario.cat/mergo"
 	"github.com/r3labs/diff/v2"
+	log "github.com/sirupsen/logrus"
 	"github.com/xtls/xray-core/app/proxyman"
 	"github.com/xtls/xray-core/app/stats"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
+
+	"github.com/XrayR-project/XrayR/api"
+	"github.com/XrayR-project/XrayR/api/bunpanel"
+	"github.com/XrayR-project/XrayR/api/gov2panel"
+	"github.com/XrayR-project/XrayR/api/newV2board"
+	"github.com/XrayR-project/XrayR/api/pmpanel"
+	"github.com/XrayR-project/XrayR/api/proxypanel"
+	"github.com/XrayR-project/XrayR/api/sspanel"
+	"github.com/XrayR-project/XrayR/api/v2raysocks"
+	"github.com/XrayR-project/XrayR/app/mydispatcher"
+	_ "github.com/XrayR-project/XrayR/cmd/distro/all"
+	"github.com/XrayR-project/XrayR/service"
+	"github.com/XrayR-project/XrayR/service/controller"
 )
 
 // Panel Structure
@@ -56,7 +58,7 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 	// DNS config
 	coreDnsConfig := &conf.DNSConfig{}
 	if panelConfig.DnsConfigPath != "" {
-		if data, err := io.ReadFile(panelConfig.DnsConfigPath); err != nil {
+		if data, err := os.ReadFile(panelConfig.DnsConfigPath); err != nil {
 			log.Panicf("Failed to read DNS config file at: %s", panelConfig.DnsConfigPath)
 		} else {
 			if err = json.Unmarshal(data, coreDnsConfig); err != nil {
@@ -64,14 +66,21 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 			}
 		}
 	}
+
+	// init controller's DNS config
+	// for _, config := range p.panelConfig.NodesConfig {
+	// 	config.ControllerConfig.DNSConfig = coreDnsConfig
+	// }
+
 	dnsConfig, err := coreDnsConfig.Build()
 	if err != nil {
 		log.Panicf("Failed to understand DNS config, Please check: https://xtls.github.io/config/dns.html for help: %s", err)
 	}
+
 	// Routing config
 	coreRouterConfig := &conf.RouterConfig{}
 	if panelConfig.RouteConfigPath != "" {
-		if data, err := io.ReadFile(panelConfig.RouteConfigPath); err != nil {
+		if data, err := os.ReadFile(panelConfig.RouteConfigPath); err != nil {
 			log.Panicf("Failed to read Routing config file at: %s", panelConfig.RouteConfigPath)
 		} else {
 			if err = json.Unmarshal(data, coreRouterConfig); err != nil {
@@ -84,9 +93,9 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 		log.Panicf("Failed to understand Routing config  Please check: https://xtls.github.io/config/routing.html for help: %s", err)
 	}
 	// Custom Inbound config
-	coreCustomInboundConfig := []conf.InboundDetourConfig{}
+	var coreCustomInboundConfig []conf.InboundDetourConfig
 	if panelConfig.InboundConfigPath != "" {
-		if data, err := io.ReadFile(panelConfig.InboundConfigPath); err != nil {
+		if data, err := os.ReadFile(panelConfig.InboundConfigPath); err != nil {
 			log.Panicf("Failed to read Custom Inbound config file at: %s", panelConfig.OutboundConfigPath)
 		} else {
 			if err = json.Unmarshal(data, &coreCustomInboundConfig); err != nil {
@@ -94,7 +103,7 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 			}
 		}
 	}
-	inBoundConfig := []*core.InboundHandlerConfig{}
+	var inBoundConfig []*core.InboundHandlerConfig
 	for _, config := range coreCustomInboundConfig {
 		oc, err := config.Build()
 		if err != nil {
@@ -103,9 +112,9 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 		inBoundConfig = append(inBoundConfig, oc)
 	}
 	// Custom Outbound config
-	coreCustomOutboundConfig := []conf.OutboundDetourConfig{}
+	var coreCustomOutboundConfig []conf.OutboundDetourConfig
 	if panelConfig.OutboundConfigPath != "" {
-		if data, err := io.ReadFile(panelConfig.OutboundConfigPath); err != nil {
+		if data, err := os.ReadFile(panelConfig.OutboundConfigPath); err != nil {
 			log.Panicf("Failed to read Custom Outbound config file at: %s", panelConfig.OutboundConfigPath)
 		} else {
 			if err = json.Unmarshal(data, &coreCustomOutboundConfig); err != nil {
@@ -113,7 +122,7 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 			}
 		}
 	}
-	outBoundConfig := []*core.OutboundHandlerConfig{}
+	var outBoundConfig []*core.OutboundHandlerConfig
 	for _, config := range coreCustomOutboundConfig {
 		oc, err := config.Build()
 		if err != nil {
@@ -122,7 +131,7 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 		outBoundConfig = append(outBoundConfig, oc)
 	}
 	// Policy config
-	levelPolicyConfig := parseConnectionConfig(panelConfig.ConnetionConfig)
+	levelPolicyConfig := parseConnectionConfig(panelConfig.ConnectionConfig)
 	corePolicyConfig := &conf.PolicyConfig{}
 	corePolicyConfig.Levels = map[uint32]*conf.Policy{0: levelPolicyConfig}
 	policyConfig, _ := corePolicyConfig.Build()
@@ -145,12 +154,11 @@ func (p *Panel) loadCore(panelConfig *Config) *core.Instance {
 	if err != nil {
 		log.Panicf("failed to create instance: %s", err)
 	}
-	log.Printf("Xray Core Version: %s", core.Version())
 
 	return server
 }
 
-// Start Start the panel
+// Start the panel
 func (p *Panel) Start() {
 	p.access.Lock()
 	defer p.access.Unlock()
@@ -161,20 +169,25 @@ func (p *Panel) Start() {
 		log.Panicf("Failed to start instance: %s", err)
 	}
 	p.Server = server
+
 	// Load Nodes config
 	for _, nodeConfig := range p.panelConfig.NodesConfig {
 		var apiClient api.API
 		switch nodeConfig.PanelType {
 		case "SSpanel":
 			apiClient = sspanel.New(nodeConfig.ApiConfig)
-		case "V2board":
-			apiClient = v2board.New(nodeConfig.ApiConfig)
+		case "NewV2board", "V2board":
+			apiClient = newV2board.New(nodeConfig.ApiConfig)
 		case "PMpanel":
 			apiClient = pmpanel.New(nodeConfig.ApiConfig)
 		case "Proxypanel":
 			apiClient = proxypanel.New(nodeConfig.ApiConfig)
 		case "V2RaySocks":
 			apiClient = v2raysocks.New(nodeConfig.ApiConfig)
+		case "GoV2Panel":
+			apiClient = gov2panel.New(nodeConfig.ApiConfig)
+		case "BunPanel":
+			apiClient = bunpanel.New(nodeConfig.ApiConfig)
 		default:
 			log.Panicf("Unsupport panel type: %s", nodeConfig.PanelType)
 		}
@@ -195,21 +208,21 @@ func (p *Panel) Start() {
 	for _, s := range p.Service {
 		err := s.Start()
 		if err != nil {
-			log.Panicf("Panel Start fialed: %s", err)
+			log.Panicf("Panel Start failed: %s", err)
 		}
 	}
 	p.Running = true
 	return
 }
 
-// Close Close the panel
+// Close the panel
 func (p *Panel) Close() {
 	p.access.Lock()
 	defer p.access.Unlock()
 	for _, s := range p.Service {
 		err := s.Close()
 		if err != nil {
-			log.Panicf("Panel Close fialed: %s", err)
+			log.Panicf("Panel Close failed: %s", err)
 		}
 	}
 	p.Service = nil
@@ -218,21 +231,21 @@ func (p *Panel) Close() {
 	return
 }
 
-func parseConnectionConfig(c *ConnetionConfig) (policy *conf.Policy) {
-	connetionConfig := getDefaultConnetionConfig()
+func parseConnectionConfig(c *ConnectionConfig) (policy *conf.Policy) {
+	connectionConfig := getDefaultConnectionConfig()
 	if c != nil {
-		if _, err := diff.Merge(connetionConfig, c, connetionConfig); err != nil {
-			log.Panicf("Read ConnetionConfig failed: %s", err)
+		if _, err := diff.Merge(connectionConfig, c, connectionConfig); err != nil {
+			log.Panicf("Read ConnectionConfig failed: %s", err)
 		}
 	}
 	policy = &conf.Policy{
 		StatsUserUplink:   true,
 		StatsUserDownlink: true,
-		Handshake:         &connetionConfig.Handshake,
-		ConnectionIdle:    &connetionConfig.ConnIdle,
-		UplinkOnly:        &connetionConfig.UplinkOnly,
-		DownlinkOnly:      &connetionConfig.DownlinkOnly,
-		BufferSize:        &connetionConfig.BufferSize,
+		Handshake:         &connectionConfig.Handshake,
+		ConnectionIdle:    &connectionConfig.ConnIdle,
+		UplinkOnly:        &connectionConfig.UplinkOnly,
+		DownlinkOnly:      &connectionConfig.DownlinkOnly,
+		BufferSize:        &connectionConfig.BufferSize,
 	}
 
 	return

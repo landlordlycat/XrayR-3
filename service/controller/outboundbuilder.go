@@ -4,26 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/XrayR-project/XrayR/api"
-	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
+
+	"github.com/XrayR-project/XrayR/api"
 )
 
-//OutboundBuilder build freedom outbund config for addoutbound
+// OutboundBuilder build freedom outbound config for addOutbound
 func OutboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.OutboundHandlerConfig, error) {
 	outboundDetourConfig := &conf.OutboundDetourConfig{}
 	outboundDetourConfig.Protocol = "freedom"
 	outboundDetourConfig.Tag = tag
 
-	// Build Send IP address
-	if config.SendIP != "" {
-		ipAddress := net.ParseAddress(config.SendIP)
-		outboundDetourConfig.SendThrough = &conf.Address{ipAddress}
-	}
+	// SendThrough setting
+	outboundDetourConfig.SendThrough = &config.SendIP
 
 	// Freedom Protocol setting
-	var domainStrategy string = "Asis"
+	var domainStrategy = "Asis"
 	if config.EnableDNS {
 		if config.DNSType != "" {
 			domainStrategy = config.DNSType
@@ -41,7 +38,7 @@ func OutboundBuilder(config *Config, nodeInfo *api.NodeInfo, tag string) (*core.
 	var setting json.RawMessage
 	setting, err := json.Marshal(proxySetting)
 	if err != nil {
-		return nil, fmt.Errorf("Marshal proxy %s config fialed: %s", nodeInfo.NodeType, err)
+		return nil, fmt.Errorf("marshal proxy %s config failed: %s", nodeInfo.NodeType, err)
 	}
 	outboundDetourConfig.Settings = &setting
 	return outboundDetourConfig.Build()

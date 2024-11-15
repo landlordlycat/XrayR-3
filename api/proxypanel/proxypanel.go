@@ -4,15 +4,17 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"reflect"
 	"regexp"
 	"strconv"
 	"time"
 
-	"github.com/XrayR-project/XrayR/api"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/go-resty/resty/v2"
+
+	"github.com/XrayR-project/XrayR/api"
 )
 
 // APIClient create a api client to the panel.
@@ -23,7 +25,7 @@ type APIClient struct {
 	Key           string
 	NodeType      string
 	EnableVless   bool
-	EnableXTLS    bool
+	VlessFlow     string
 	SpeedLimit    float64
 	DeviceLimit   int
 	LocalRuleList []api.DetectRule
@@ -56,7 +58,7 @@ func New(apiConfig *api.Config) *APIClient {
 		APIHost:       apiConfig.APIHost,
 		NodeType:      apiConfig.NodeType,
 		EnableVless:   apiConfig.EnableVless,
-		EnableXTLS:    apiConfig.EnableXTLS,
+		VlessFlow:     apiConfig.VlessFlow,
 		SpeedLimit:    apiConfig.SpeedLimit,
 		DeviceLimit:   apiConfig.DeviceLimit,
 		LocalRuleList: localRuleList,
@@ -72,7 +74,7 @@ func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 		// open the file
 		file, err := os.Open(path)
 
-		//handle errors while opening
+		// handle errors while opening
 		if err != nil {
 			log.Printf("Error when opening file: %s", err)
 			return LocalRuleList
@@ -90,7 +92,7 @@ func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 		// handle first encountered error while reading
 		if err := fileScanner.Err(); err != nil {
 			log.Fatalf("Error while reading file: %s", err)
-			return make([]api.DetectRule, 0)
+			return
 		}
 
 		file.Close()
@@ -134,7 +136,7 @@ func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (
 
 	if response.Status != "success" {
 		res, _ := json.Marshal(&response)
-		return nil, fmt.Errorf("Ret %s invalid", string(res))
+		return nil, fmt.Errorf("ret %s invalid", string(res))
 	}
 	return response, nil
 }
@@ -143,14 +145,14 @@ func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (
 func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 	var path string
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		path = fmt.Sprintf("/api/v2ray/v1/node/%d", c.NodeID)
 	case "Trojan":
 		path = fmt.Sprintf("/api/trojan/v1/node/%d", c.NodeID)
 	case "Shadowsocks":
 		path = fmt.Sprintf("/api/ss/v1/node/%d", c.NodeID)
 	default:
-		return nil, fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	res, err := c.createCommonRequest().
@@ -164,19 +166,19 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 	}
 
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		nodeInfo, err = c.ParseV2rayNodeResponse(&response.Data)
 	case "Trojan":
 		nodeInfo, err = c.ParseTrojanNodeResponse(&response.Data)
 	case "Shadowsocks":
 		nodeInfo, err = c.ParseSSNodeResponse(&response.Data)
 	default:
-		return nil, fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	if err != nil {
 		res, _ := json.Marshal(response.Data)
-		return nil, fmt.Errorf("Parse node info failed: %s, \nError: %s", string(res), err)
+		return nil, fmt.Errorf("parse node info failed: %s, \nError: %s", string(res), err)
 	}
 
 	return nodeInfo, nil
@@ -186,14 +188,14 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 	var path string
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		path = fmt.Sprintf("/api/v2ray/v1/userList/%d", c.NodeID)
 	case "Trojan":
 		path = fmt.Sprintf("/api/trojan/v1/userList/%d", c.NodeID)
 	case "Shadowsocks":
 		path = fmt.Sprintf("/api/ss/v1/userList/%d", c.NodeID)
 	default:
-		return nil, fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	res, err := c.createCommonRequest().
@@ -207,18 +209,18 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 	}
 	userList := new([]api.UserInfo)
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		userList, err = c.ParseV2rayUserListResponse(&response.Data)
 	case "Trojan":
 		userList, err = c.ParseTrojanUserListResponse(&response.Data)
 	case "Shadowsocks":
 		userList, err = c.ParseSSUserListResponse(&response.Data)
 	default:
-		return nil, fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 	if err != nil {
 		res, _ := json.Marshal(response.Data)
-		return nil, fmt.Errorf("Parse user list failed: %s", string(res))
+		return nil, fmt.Errorf("parse user list failed: %s", string(res))
 	}
 	return userList, nil
 }
@@ -227,14 +229,14 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 func (c *APIClient) ReportNodeStatus(nodeStatus *api.NodeStatus) (err error) {
 	var path string
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		path = fmt.Sprintf("/api/v2ray/v1/nodeStatus/%d", c.NodeID)
 	case "Trojan":
 		path = fmt.Sprintf("/api/trojan/v1/nodeStatus/%d", c.NodeID)
 	case "Shadowsocks":
 		path = fmt.Sprintf("/api/ss/v1/nodeStatus/%d", c.NodeID)
 	default:
-		return fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	systemload := NodeStatus{
@@ -258,19 +260,19 @@ func (c *APIClient) ReportNodeStatus(nodeStatus *api.NodeStatus) (err error) {
 	return nil
 }
 
-//ReportNodeOnlineUsers reports online user ip
+// ReportNodeOnlineUsers reports online user ip
 func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) error {
 
 	var path string
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		path = fmt.Sprintf("/api/v2ray/v1/nodeOnline/%d", c.NodeID)
 	case "Trojan":
 		path = fmt.Sprintf("/api/trojan/v1/nodeOnline/%d", c.NodeID)
 	case "Shadowsocks":
 		path = fmt.Sprintf("/api/ss/v1/nodeOnline/%d", c.NodeID)
 	default:
-		return fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	data := make([]NodeOnline, len(*onlineUserList))
@@ -296,14 +298,14 @@ func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) erro
 func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 	var path string
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		path = fmt.Sprintf("/api/v2ray/v1/userTraffic/%d", c.NodeID)
 	case "Trojan":
 		path = fmt.Sprintf("/api/trojan/v1/userTraffic/%d", c.NodeID)
 	case "Shadowsocks":
 		path = fmt.Sprintf("/api/ss/v1/userTraffic/%d", c.NodeID)
 	default:
-		return fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	data := make([]UserTraffic, len(*userTraffic))
@@ -331,14 +333,14 @@ func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	var path string
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		path = fmt.Sprintf("/api/v2ray/v1/nodeRule/%d", c.NodeID)
 	case "Trojan":
 		path = fmt.Sprintf("/api/trojan/v1/nodeRule/%d", c.NodeID)
 	case "Shadowsocks":
 		path = fmt.Sprintf("/api/ss/v1/nodeRule/%d", c.NodeID)
 	default:
-		return nil, fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	res, err := c.createCommonRequest().
@@ -354,7 +356,7 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	ruleListResponse := new(NodeRule)
 
 	if err := json.Unmarshal(response.Data, ruleListResponse); err != nil {
-		return nil, fmt.Errorf("Unmarshal %s failed: %s", reflect.TypeOf(ruleListResponse), err)
+		return nil, fmt.Errorf("unmarshal %s failed: %s", reflect.TypeOf(ruleListResponse), err)
 	}
 	ruleList := c.LocalRuleList
 	// Only support reject rule type
@@ -379,14 +381,14 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 func (c *APIClient) ReportIllegal(detectResultList *[]api.DetectResult) error {
 	var path string
 	switch c.NodeType {
-	case "V2ray":
+	case "V2ray", "Vmess", "Vless":
 		path = fmt.Sprintf("/api/v2ray/v1/trigger/%d", c.NodeID)
 	case "Trojan":
 		path = fmt.Sprintf("/api/trojan/v1/trigger/%d", c.NodeID)
 	case "Shadowsocks":
 		path = fmt.Sprintf("/api/ss/v1/trigger/%d", c.NodeID)
 	default:
-		return fmt.Errorf("Unsupported Node type: %s", c.NodeType)
+		return fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
 
 	for _, r := range *detectResultList {
@@ -411,23 +413,17 @@ func (c *APIClient) ReportIllegal(detectResultList *[]api.DetectResult) error {
 
 // ParseV2rayNodeResponse parse the response for the given nodeinfor format
 func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *json.RawMessage) (*api.NodeInfo, error) {
-	var TLStype string
-	var speedlimit uint64 = 0
-	if c.EnableXTLS {
-		TLStype = "xtls"
-	} else {
-		TLStype = "tls"
-	}
+	var speedLimit uint64 = 0
 
 	v2rayNodeInfo := new(V2rayNodeInfo)
 	if err := json.Unmarshal(*nodeInfoResponse, v2rayNodeInfo); err != nil {
-		return nil, fmt.Errorf("Unmarshal %s failed: %s", reflect.TypeOf(*nodeInfoResponse), err)
+		return nil, fmt.Errorf("unmarshal %s failed: %s", reflect.TypeOf(*nodeInfoResponse), err)
 	}
 
 	if c.SpeedLimit > 0 {
-		speedlimit = uint64((c.SpeedLimit * 1000000) / 8)
+		speedLimit = uint64((c.SpeedLimit * 1000000) / 8)
 	} else {
-		speedlimit = uint64((v2rayNodeInfo.SpeedLimit * 1000000) / 8)
+		speedLimit = (v2rayNodeInfo.SpeedLimit * 1000000) / 8
 	}
 
 	if c.DeviceLimit == 0 && v2rayNodeInfo.ClientLimit > 0 {
@@ -435,72 +431,65 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *json.RawMessage) (*
 	}
 
 	// Create GeneralNodeInfo
-	nodeinfo := &api.NodeInfo{
+	nodeInfo := &api.NodeInfo{
 		NodeType:          c.NodeType,
 		NodeID:            c.NodeID,
 		Port:              v2rayNodeInfo.V2Port,
-		SpeedLimit:        speedlimit,
+		SpeedLimit:        speedLimit,
 		AlterID:           v2rayNodeInfo.V2AlterID,
 		TransportProtocol: v2rayNodeInfo.V2Net,
 		FakeType:          v2rayNodeInfo.V2Type,
 		EnableTLS:         v2rayNodeInfo.V2TLS,
-		TLSType:           TLStype,
 		Path:              v2rayNodeInfo.V2Path,
 		Host:              v2rayNodeInfo.V2Host,
 		EnableVless:       c.EnableVless,
+		VlessFlow:         c.VlessFlow,
 	}
 
-	return nodeinfo, nil
+	return nodeInfo, nil
 }
 
 // ParseSSNodeResponse parse the response for the given nodeinfor format
 func (c *APIClient) ParseSSNodeResponse(nodeInfoResponse *json.RawMessage) (*api.NodeInfo, error) {
-	var speedlimit uint64 = 0
+	var speedLimit uint64 = 0
 	shadowsocksNodeInfo := new(ShadowsocksNodeInfo)
 	if err := json.Unmarshal(*nodeInfoResponse, shadowsocksNodeInfo); err != nil {
-		return nil, fmt.Errorf("Unmarshal %s failed: %s", reflect.TypeOf(*nodeInfoResponse), err)
+		return nil, fmt.Errorf("unmarshal %s failed: %s", reflect.TypeOf(*nodeInfoResponse), err)
 	}
 	if c.SpeedLimit > 0 {
-		speedlimit = uint64((c.SpeedLimit * 1000000) / 8)
+		speedLimit = uint64((c.SpeedLimit * 1000000) / 8)
 	} else {
-		speedlimit = uint64((shadowsocksNodeInfo.SpeedLimit * 1000000) / 8)
+		speedLimit = uint64((shadowsocksNodeInfo.SpeedLimit * 1000000) / 8)
 	}
 
 	if c.DeviceLimit == 0 && shadowsocksNodeInfo.ClientLimit > 0 {
 		c.DeviceLimit = shadowsocksNodeInfo.ClientLimit
 	}
 	// Create GeneralNodeInfo
-	nodeinfo := &api.NodeInfo{
+	nodeInfo := &api.NodeInfo{
 		NodeType:          c.NodeType,
 		NodeID:            c.NodeID,
 		Port:              shadowsocksNodeInfo.Port,
-		SpeedLimit:        speedlimit,
+		SpeedLimit:        speedLimit,
 		TransportProtocol: "tcp",
 		CypherMethod:      shadowsocksNodeInfo.Method,
 	}
 
-	return nodeinfo, nil
+	return nodeInfo, nil
 }
 
 // ParseTrojanNodeResponse parse the response for the given nodeinfor format
 func (c *APIClient) ParseTrojanNodeResponse(nodeInfoResponse *json.RawMessage) (*api.NodeInfo, error) {
-
-	var TLSType string
-	var speedlimit uint64 = 0
-	if c.EnableXTLS {
-		TLSType = "xtls"
-	} else {
-		TLSType = "tls"
-	}
+	var speedLimit uint64 = 0
 
 	trojanNodeInfo := new(TrojanNodeInfo)
 	if err := json.Unmarshal(*nodeInfoResponse, trojanNodeInfo); err != nil {
-		return nil, fmt.Errorf("Unmarshal %s failed: %s", reflect.TypeOf(*nodeInfoResponse), err)
+		return nil, fmt.Errorf("unmarshal %s failed: %s", reflect.TypeOf(*nodeInfoResponse), err)
 	}
 	if c.SpeedLimit > 0 {
-		speedlimit = uint64((c.SpeedLimit * 1000000) / 8)
+		speedLimit = uint64((c.SpeedLimit * 1000000) / 8)
 	} else {
-		speedlimit = uint64((trojanNodeInfo.SpeedLimit * 1000000) / 8)
+		speedLimit = (trojanNodeInfo.SpeedLimit * 1000000) / 8
 	}
 
 	if c.DeviceLimit == 0 && trojanNodeInfo.ClientLimit > 0 {
@@ -508,41 +497,40 @@ func (c *APIClient) ParseTrojanNodeResponse(nodeInfoResponse *json.RawMessage) (
 	}
 
 	// Create GeneralNodeInfo
-	nodeinfo := &api.NodeInfo{
+	nodeInfo := &api.NodeInfo{
 		NodeType:          c.NodeType,
 		NodeID:            c.NodeID,
 		Port:              trojanNodeInfo.TrojanPort,
-		SpeedLimit:        speedlimit,
+		SpeedLimit:        speedLimit,
 		TransportProtocol: "tcp",
 		EnableTLS:         true,
-		TLSType:           TLSType,
 	}
 
-	return nodeinfo, nil
+	return nodeInfo, nil
 }
 
 // ParseV2rayUserListResponse parse the response for the given userinfo format
 func (c *APIClient) ParseV2rayUserListResponse(userInfoResponse *json.RawMessage) (*[]api.UserInfo, error) {
-	var speedlimit uint64 = 0
+	var speedLimit uint64 = 0
 
 	vmessUserList := new([]*VMessUser)
 	if err := json.Unmarshal(*userInfoResponse, vmessUserList); err != nil {
-		return nil, fmt.Errorf("Unmarshal %s failed: %s", reflect.TypeOf(*userInfoResponse), err)
+		return nil, fmt.Errorf("unmarshal %s failed: %s", reflect.TypeOf(*userInfoResponse), err)
 	}
 
 	userList := make([]api.UserInfo, len(*vmessUserList))
 	for i, user := range *vmessUserList {
 		if c.SpeedLimit > 0 {
-			speedlimit = uint64((c.SpeedLimit * 1000000) / 8)
+			speedLimit = uint64((c.SpeedLimit * 1000000) / 8)
 		} else {
-			speedlimit = uint64((user.SpeedLimit * 1000000) / 8)
+			speedLimit = (user.SpeedLimit * 1000000) / 8
 		}
 		userList[i] = api.UserInfo{
 			UID:         user.UID,
 			Email:       "",
 			UUID:        user.VmessUID,
 			DeviceLimit: c.DeviceLimit,
-			SpeedLimit:  speedlimit,
+			SpeedLimit:  speedLimit,
 		}
 	}
 
@@ -551,26 +539,26 @@ func (c *APIClient) ParseV2rayUserListResponse(userInfoResponse *json.RawMessage
 
 // ParseTrojanUserListResponse parse the response for the given userinfo format
 func (c *APIClient) ParseTrojanUserListResponse(userInfoResponse *json.RawMessage) (*[]api.UserInfo, error) {
-	var speedlimit uint64 = 0
+	var speedLimit uint64 = 0
 
 	trojanUserList := new([]*TrojanUser)
 	if err := json.Unmarshal(*userInfoResponse, trojanUserList); err != nil {
-		return nil, fmt.Errorf("Unmarshal %s failed: %s", reflect.TypeOf(*userInfoResponse), err)
+		return nil, fmt.Errorf("unmarshal %s failed: %s", reflect.TypeOf(*userInfoResponse), err)
 	}
 
 	userList := make([]api.UserInfo, len(*trojanUserList))
 	for i, user := range *trojanUserList {
 		if c.SpeedLimit > 0 {
-			speedlimit = uint64((c.SpeedLimit * 1000000) / 8)
+			speedLimit = uint64((c.SpeedLimit * 1000000) / 8)
 		} else {
-			speedlimit = uint64((user.SpeedLimit * 1000000) / 8)
+			speedLimit = (user.SpeedLimit * 1000000) / 8
 		}
 		userList[i] = api.UserInfo{
 			UID:         user.UID,
 			Email:       "",
 			UUID:        user.Password,
 			DeviceLimit: c.DeviceLimit,
-			SpeedLimit:  speedlimit,
+			SpeedLimit:  speedLimit,
 		}
 	}
 
@@ -579,26 +567,26 @@ func (c *APIClient) ParseTrojanUserListResponse(userInfoResponse *json.RawMessag
 
 // ParseSSUserListResponse parse the response for the given userinfo format
 func (c *APIClient) ParseSSUserListResponse(userInfoResponse *json.RawMessage) (*[]api.UserInfo, error) {
-	var speedlimit uint64 = 0
+	var speedLimit uint64 = 0
 
 	ssUserList := new([]*SSUser)
 	if err := json.Unmarshal(*userInfoResponse, ssUserList); err != nil {
-		return nil, fmt.Errorf("Unmarshal %s failed: %s", reflect.TypeOf(*userInfoResponse), err)
+		return nil, fmt.Errorf("unmarshal %s failed: %s", reflect.TypeOf(*userInfoResponse), err)
 	}
 
 	userList := make([]api.UserInfo, len(*ssUserList))
 	for i, user := range *ssUserList {
 		if c.SpeedLimit > 0 {
-			speedlimit = uint64((c.SpeedLimit * 1000000) / 8)
+			speedLimit = uint64((c.SpeedLimit * 1000000) / 8)
 		} else {
-			speedlimit = uint64((user.SpeedLimit * 1000000) / 8)
+			speedLimit = uint64(user.SpeedLimit * 1000000 / 8)
 		}
 		userList[i] = api.UserInfo{
 			UID:         user.UID,
 			Email:       "",
 			Passwd:      user.Password,
 			DeviceLimit: c.DeviceLimit,
-			SpeedLimit:  speedlimit,
+			SpeedLimit:  speedLimit,
 		}
 	}
 
